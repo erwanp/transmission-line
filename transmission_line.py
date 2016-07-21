@@ -20,7 +20,7 @@ import matplotlib
 #from matplotlib.figure import Figure
 
 import numpy as np
-from numpy import zeros, ceil, sqrt
+from numpy import zeros, ceil, sqrt, pi
 import matplotlib.pyplot as plt
 from matplotlib import animation
 from matplotlib import gridspec
@@ -73,9 +73,40 @@ class Pulser():
         return Vs
  
 class Load():
+    ''' Generic class. Use one of the subclasses'''
     
     def __init__(self,Z):
-        self.Z = Z
+        self.Z = None
+
+class ResistiveLoad(Load):
+    
+    def __init__(self,Z):
+        self.Z = lambda t: Z
+
+class PlasmaLoad(Load):
+    
+    def __init__(self,Z,D=1e-3,l=6e-3):
+        ''' Input
+        
+        D: plasma diameter
+        l: gap distance 
+        '''
+        self.Z = lambda t: Z
+        self.D = D
+        self.l = l
+
+    def sigma(self,t):
+        ''' Electrical conductivity'''
+        e = 1.60217657e-19
+
+        return e**2*ne(t)/
+
+    def ne(self):
+        ''' Electron density'''        
+    
+    def Rp(self,t):
+        2*pi*R
+
 
 class Line():
  
@@ -123,11 +154,11 @@ class Line():
         self.Inp = Inp
         self.Out = Out
         R1 = Inp.Z
-        R2 = Out.Z
+        R2 = Out.Z        # function of time
         
         # %% build simulation
         G1 = 1 / R1
-        G2 = 1 / R2
+        G2 = lambda t: 1 / R2(t)
         # trapz
         GC = 2*C / dt        # capacitor conductance in Norton equivalent circuit
         GL = dt / (2*L)      # inductor conductance in Norton equivalent circuit
@@ -136,11 +167,11 @@ class Line():
         #    GL = dt / L
          
         # diagonal divisors
-        diags = zeros(elems + 1)
+        diags = zeros(elems)
         diags[0] = G1 + GL
         for i in range(1, elems):
             diags[i] = 2 * GL + GC - GL * GL / diags[i - 1]
-        diags[elems] = GC + GL + G2 - GL * GL / diags[elems - 1]
+        diags_out = lambda t: GC + GL + G2(t) - GL * GL / diags[elems - 1]
         
         # storage dictionary for voltage / intensity
         self.V = {}
@@ -153,7 +184,7 @@ class Line():
         # Adjust interval to change the animation speed
 #        params = [G1, G2, GC, GL,tRise,tFall,tPeriod,tOn,eps,Von,Voff,xscope,
 #                 dt,elems,diags,x]
-        params = [G1, G2, GC, GL, elems, diags,x]
+        params = [G1, G2, GC, GL, elems, diags,diags_out,x]
         self.params = params
         
     def solve(self,tmax=20e-9,dt=1e-11):
@@ -170,7 +201,7 @@ class Line():
             Vs = self.Inp.V(t)
             
             # line voltage
-            V, I = self.simStep(V, I, Vs, dt)
+            V, I = self.simStep(V, I, Vs, t, dt)
             
             self.V[t], self.I[t] = V, I
             
@@ -222,7 +253,7 @@ class Line():
 #            repeat_delay=500)
             
 #    @jit
-    def simStep(self, V, I, Vs, dt):
+    def simStep(self, V, I, Vs, t, dt):
         '''
         Simulates one time step starting from V, I with timestep dt 
         
@@ -231,7 +262,7 @@ class Line():
         - with @jit: 10000 loops, best of 3: 16.1 µs per loop
         '''
 
-        (G1, G2, GC, GL, elems, diags,x) = self.params
+        (G1, G2, GC, GL, elems, diags,diags_out,x) = self.params
                 
         # calculate norton currents for caps/inductors
         INort = zeros(2 * elems)
@@ -257,7 +288,7 @@ class Line():
          
         # back-sub for voltages
         Vnew = zeros(elems + 1)
-        Vnew[elems] = Bvec[elems] / diags[elems]
+        Vnew[elems] = Bvec[elems] / diags_out(t)
         for i in range(elems - 1, -1, -1):
             Vnew[i] = (Bvec[i] + GL * Vnew[i+1]) / diags[i]
          
@@ -328,7 +359,7 @@ if __name__ == '__main__':
     xscope = 0.59   # % of total cable length where to place the scope
     
     fid = Pulser(Zin,Von,Voff,tRise,tOn,tFall,tPeriod)
-    load = Load(Zout)
+    load = PlasmaLoad(Zout)
     tl=Line(Z,fid,load,d,eps=2.25,xscope=xscope,interval=1)
     
     tl.solve(tmax,dt)
