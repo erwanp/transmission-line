@@ -11,7 +11,7 @@ Updated Erwan Pannier 30/11/15:
 
 """
 
-import matplotlib
+#import matplotlib
 #matplotlib.use("TkAgg")
 
 #from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
@@ -26,6 +26,7 @@ from matplotlib import animation
 from matplotlib import gridspec
 from numba import jit
 
+DEBUG = False
 
 #    @jit
 class Pulser():
@@ -76,7 +77,54 @@ class Load():
     
     def __init__(self,Z):
         self.Z = Z
+        
+class Oscilloscope():
+    
+    def __init__(self, line, xscope, tmax):
+        
+        self.line = line
+        self.xscope = xscope
+        self.tmax = tmax
+        
+        elems = self.line.elems
+        self.iscope = int(ceil(xscope*elems))
+        
+        self._compute()
+        
+    def _compute(self):
+        try:
+            assert(self.line.solved)
+        except AssertionError:
+            raise AssertionError('Solve transmission line before adding a scope')
+        
+        self.t = self.line.t
+        self.V = self.line.Varray[:,self.iscope]
+        self.I = self.line.Iarray[:,self.iscope]
+        
+    def plot(self,fig=None):
+        ''' Plot scope trace on whole range '''
 
+        if fig is None:
+            fig = plt.figure()
+        ax = fig.gca()   
+        ax.plot(self.t*1e9,self.V)
+        ax.plot(self.t*1e9,self.I, 'r')
+        ax.set_xlabel('Time (ns)')
+        ax.set_ylabel('Voltage (V), Current (A)')
+        ax.set_title('Oscilloscope at x={0:.1f}m'.format(self.xscope*self.line.d))
+        ax.set_xlim((0,self.tmax*1e9))
+        ax.set_ylim((-2,2))
+        ax.grid(True)
+        
+        fig.show()
+    
+    def get_V(self,t):
+        return self.V(self.t==t)
+        
+    def get_I(self,t):
+        return self.I(self.t==t)
+        
+        
 class Line():
  
     '''
@@ -104,17 +152,21 @@ class Line():
     '''    
        
     def __init__(self,Z,Inp,Out,d,eps=2.25,
-                 xscope=1,elems=256,interval=20):
+                 xscope=1,elems=256,interval=20,dt=1e-11):
         
         # Model parameters    
         v = 2.998e8/sqrt(eps)   # signal speed (m/s)
         tDelay = d/v        # Propagation time (ns)
         C = tDelay / Z / elems
         L = Z**2 * C
+        self.dt = dt
+        self.d = d
+        self.Z = Z
+        
+        self.solved = False
         
         # Scope    
-        self.iscope = int(ceil(xscope*elems))
-        
+        self.scope = None
         
         self.elems = elems
         self.interval = interval        
@@ -156,15 +208,19 @@ class Line():
         params = [G1, G2, GC, GL, elems, diags,x]
         self.params = params
         
-    def solve(self,tmax=20e-9,dt=1e-11):
+        
+    def solve(self,tmax=20e-9):
         ''' do all calculations '''
         
+        dt = self.dt
         tarr = np.arange(0,tmax,dt)
         self.t = tarr
         
         self.V[0] = V = zeros(self.elems + 1)
         self.I[0] = I = zeros(2 * self.elems)
         
+        Varray = []
+        Iarray = []
         for t in tarr:
             # source voltage
             Vs = self.Inp.V(t)
@@ -172,54 +228,14 @@ class Line():
             # line voltage
             V, I = self.simStep(V, I, Vs, dt)
             
-            self.V[t], self.I[t] = V, I
-            
-    def get_V(self,t,xindex):
-        ''' Assumes already calculated '''
-        
-        return self.V[t][xindex]
-    
-    def plot(self):
-        
-        # Plot everything
+            self.V[t], self.I[t] = V, I         # TODO: turn V[t] into a function that reads Varray [and maybe interpolate]
+            Varray.append(V)
+            Iarray.append(V)
 
-        x = self.x
-        
-        plt.close()
-        self.fig = plt.figure()
-        gs = gridspec.GridSpec(2, 1, height_ratios=[2, 1],hspace=0.5)
-        ax = plt.subplot(gs[0])
-        ax.set_xlim((0,d))
-        ax.set_ylim((-2,2))
-        ax.set_ylabel('Voltage (V)')
-        ax.set_xlabel('Line (m)')
-        ax.set_title('Line ${0:.0f}\Omega$, Load ${1:.0f}\Omega$, Pulse ${2:.0f}ns$ with ${3:.0f}ns$ rise time'.format(
-                                Z,self.Inp.Z,self.Inp.tOn*1e9,self.Inp.tRise*1e9))
-        ax.plot(x,np.zeros_like(x),':k')
-        ax.plot([xscope*d]*2,ax.get_ylim(),'-r',linewidth=2,alpha=0.3)
-        self.line, = ax.plot([], [], lw=2)
-        self.ttl = ax.text(.05, 0.95, '', transform = ax.transAxes, va='center')
-        
-        # %% Oscilloscope
-        ax2 = plt.subplot(gs[1])    
-        ax2.set_xlabel('Time (ns)')
-        ax2.set_ylabel('Voltage (V)')
-        ax2.set_title('Oscilloscope at x={0:.1f}m'.format(xscope*d))
-        ax2.set_xlim((-100,0))
-        ax2.set_ylim((-2,2))
-        ax2.grid(True)
-        self.lscope, = ax2.plot([], [], lw=2)
-        
-    def start(self,nframes=1000):
-        ''' note: animation has to create a self.anim ?'''
+        self.Varray = np.array(Varray)
+        self.Iarray = np.array(Iarray)
 
-        self.anim = animation.FuncAnimation(self.fig, self.animate, init_func=self.init,
-               frames=nframes, interval=self.interval)
-               #, blit=True,repeat=True,               repeat_delay=500)
-#                           
-#        self.anim = animation.FuncAnimation(self.fig, self.animate,
-#            frames=nframes, interval=50, blit=True,repeat=True,
-#            repeat_delay=500)
+        self.solved = True
             
 #    @jit
     def simStep(self, V, I, Vs, dt):
@@ -279,13 +295,80 @@ class Line():
     #         Inew[2 * i + 1] = GC * (Vnew[i + 1] + V[i + 1])
         return Vnew, I
  
+    def get_V(self,t,xindex):
+        ''' Assumes already calculated '''
+        
+        return self.V[t][xindex]
+
+    def get_I(self,t,xindex):
+        ''' Assumes already calculated '''
+        
+        return self.I[t][xindex]
+
+    def add_scope(self,xscope,plot_tmax):
+        self.scope = Oscilloscope(self,xscope,plot_tmax)
+        return self.scope
+        
+    def has_scope(self):
+        return self.scope is not None
+        
+    def init_movie(self):
+        
+        # Plot everything
+
+        x = self.x
+        
+        self.fig = plt.figure()
+        nscreens = 1
+        if self.has_scope():
+            nscreens = 2
+        gs = gridspec.GridSpec(nscreens, 1)
+        ax = plt.subplot(gs[0])
+        ax.set_xlim((0,self.d))
+        ax.set_ylim((-2,2))
+        ax.set_ylabel('Voltage (V)')
+        ax.set_xlabel('Line (m)')
+        ax.set_title('Line ${0:.0f}\Omega$, Pulser ${1:.0f}\Omega$, Pulse ${2:.0f}ns$ with ${3:.0f}ns$ rise time'.format(
+                                self.Z,self.Inp.Z,self.Inp.tOn*1e9,self.Inp.tRise*1e9))
+        ax.plot(x,np.zeros_like(x),':k')
+        if self.has_scope():    
+            ax.plot([self.scope.xscope*self.d]*2,ax.get_ylim(),'-r',linewidth=2,alpha=0.3)
+        else:
+            self.lscope = None
+            self.tscope = None
+        self.line, = ax.plot([], [], lw=2)
+        self.ttl = ax.text(.05, 0.95, '', transform = ax.transAxes, va='center')
+        
+        # %% Oscilloscope
+        if self.scope is not None:
+            ax2 = plt.subplot(gs[1])    
+            ax2.set_xlabel('Time (ns)')
+            ax2.set_ylabel('Voltage (V)')
+            ax2.set_title('Oscilloscope at x={0:.1f}m'.format(self.scope.xscope*self.d))
+            ax2.set_xlim((-self.scope.tmax*1e9,0))
+            ax2.set_ylim((-2,2))
+            ax2.grid(True)
+            self.lscope, = ax2.plot([], [], lw=2)
+        
+    def start_movie(self,nframes=1000):
+        ''' note: animation has to create a self.anim ?'''
+
+        self.anim = animation.FuncAnimation(self.fig, self.animate, init_func=self.init,
+               frames=nframes, interval=self.interval)
+               #, blit=True,repeat=True,               repeat_delay=500)
+#                           
+#        self.anim = animation.FuncAnimation(self.fig, self.animate,
+#            frames=nframes, interval=50, blit=True,repeat=True,
+#            repeat_delay=500)
+            
 
     def init(self):    
 
         self.ttl.set_text('')
         self.line.set_data([], [])
-        self.lscope.set_data([], [])
-        self.tscope, self.Vscope = ([], [])
+        if self.scope is not None:
+            self.lscope.set_data([], [])
+            self.tscope, self.Vscope = ([], [])
         return self.line, self.lscope, self.ttl
                     
     # animation function.  This is called sequentially
@@ -294,15 +377,23 @@ class Line():
     #    global tOn, diags, V, I,x, ax, tscope, Vscope, iscope, lscope
     
         t = self.t[i]
-        
+
         self.line.set_data(self.x,self.get_V(t,self.xindex))    
+        self.line.set_data(self.x,self.get_I(t,self.xindex))    
         self.ttl.set_text('{0:.1f}ns'.format(t*1e9))
         
         # scope
-        self.tscope.append(-t*1e9)
-        self.Vscope = [self.V[t][self.iscope]] + self.Vscope
-        self.lscope.set_data(self.tscope,self.Vscope)
-        
+        if self.has_scope():
+            self.tscope.append(-t*1e9)
+            self.Vscope = [self.V[t][self.scope.iscope]] + self.Vscope
+            self.Iscope = [self.I[t][self.scope.iscope]] + self.Iscope
+            self.lscope.set_data(self.tscope,self.Vscope)
+            
+        # DEBUG MODE: should print t here
+        # Else an error happens in animate, but is not reported because animate
+        # doesn't seem to stream back its errors
+        if DEBUG:
+            print(t)
         
         return self.line, self.lscope, self.ttl
     
@@ -311,9 +402,9 @@ if __name__ == '__main__':
     
     #%% Model parameters
     Z = 50              # equivalent line impedance (Ohm)
-    d = 2               # line length (m)
+    d = 3               # line length (m)
      
-    Zin = 300             # pulser impedance
+    Zin = 200             # pulser impedance
     Zout = 1e-9            # Load impedance
     tmax = 100e-9
     dt = 1e-10          # time resolution. lower = better but more time consuming
@@ -321,20 +412,27 @@ if __name__ == '__main__':
     tFall = tRise
     tPeriod = 5000e-9 #1000e-9
     tOn = 5e-9 # tPeriod / 2 - tRise
-    Von = 4
+    Von = 1*Zin/Z
     Voff = 0
      
+#    plt.close('all')
+    
     # Scope
-    xscope = 0.59   # % of total cable length where to place the scope
+    xscope = 0.95   # % of total cable length where to place the scope
     
     fid = Pulser(Zin,Von,Voff,tRise,tOn,tFall,tPeriod)
     load = Load(Zout)
-    tl=Line(Z,fid,load,d,eps=2.25,xscope=xscope,interval=1)
+    tl=Line(Z,fid,load,d,eps=2.25,interval=1,elems=250,dt=dt)
     
-    tl.solve(tmax,dt)
+    tl.solve(tmax)
     
-    tl.plot()
+    
+    scope = tl.add_scope(xscope,tmax)
+    
+    scope.plot(plt.figure(1))
+    
     nframes = int(tmax//dt)
-    tl.start(nframes=nframes)
+    tl.init_movie()
+    tl.start_movie(nframes=nframes)
     
-    plt.show() 
+    tl.fig.show() 
