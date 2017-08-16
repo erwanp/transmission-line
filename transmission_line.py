@@ -83,6 +83,7 @@ class Oscilloscope():
     def __init__(self, line, xscope, tmax):
         
         self.line = line
+        self.line = line
         self.xscope = xscope
         self.tmax = tmax
         
@@ -101,21 +102,29 @@ class Oscilloscope():
         self.V = self.line.Varray[:,self.iscope]
         self.I = self.line.Iarray[:,self.iscope]
         
-    def plot(self,fig=None):
+    def plot(self,nfig=None):
         ''' Plot scope trace on whole range '''
 
-        if fig is None:
-            fig = plt.figure()
-        ax = fig.gca()   
-        ax.plot(self.t*1e9,self.V)
-        ax.plot(self.t*1e9,self.I, 'r')
-        ax.set_xlabel('Time (ns)')
-        ax.set_ylabel('Voltage (V), Current (A)')
-        ax.set_title('Oscilloscope at x={0:.1f}m'.format(self.xscope*self.line.d))
-        ax.set_xlim((0,self.tmax*1e9))
-        ax.set_ylim((-2,2))
-        ax.grid(True)
+        fig = plt.figure(num=nfig)
+        fig.clear()
+        axV = fig.gca()   
+        axV.plot(self.t*1e9,self.V)
+        axV.set_xlabel('Time (ns)')
+        axV.set_ylabel('Voltage (V)')
+        axV.set_title('Oscilloscope at x={0:.1f}m'.format(self.xscope*self.line.d))
+#        axV.set_ylim((-2,2))
+#        axV.set_xlim((0,self.tmax*1e9))
+        axV.grid(True)
         
+        axI = axV.twinx()
+        axI.plot(self.t*1e9,self.I, 'r')
+        axI.set_ylabel('Current (A)')
+        axI.yaxis.label.set_color('r')
+        axI.tick_params(axis='y', colors='r')
+        axI.set_xlim((0,self.tmax*1e9))
+#        axI.set_ylim((-1,1))
+        
+        fig.tight_layout()
         fig.show()
     
     def get_V(self,t):
@@ -230,7 +239,7 @@ class Line():
             
             self.V[t], self.I[t] = V, I         # TODO: turn V[t] into a function that reads Varray [and maybe interpolate]
             Varray.append(V)
-            Iarray.append(V)
+            Iarray.append(I)
 
         self.Varray = np.array(Varray)
         self.Iarray = np.array(Iarray)
@@ -278,22 +287,22 @@ class Line():
             Vnew[i] = (Bvec[i] + GL * Vnew[i+1]) / diags[i]
          
         # calculate currents through inductors/caps
-        #Inew = zeros(2 * elems)
+        Inew = zeros(2 * elems)
         for i in range(0, elems):
             # trapz
             # inductor
-            #Inew[2*i] = GL * (Vnew[i] - Vnew[i+1] + V[i] - V[i+1]) + I[2*i]
-            I[2*i] = GL * (Vnew[i] - Vnew[i+1] + V[i] - V[i+1]) + I[2*i]
+            Inew[2*i] = GL * (Vnew[i] - Vnew[i+1] + V[i] - V[i+1]) + I[2*i]
+#            I[2*i] = GL * (Vnew[i] - Vnew[i+1] + V[i] - V[i+1]) + I[2*i]
             # capacitor
-            #Inew[2*i + 1] = GC * (Vnew[i + 1] - V[i + 1]) - I[2*i + 1]
-            I[2*i+1] = GC * (Vnew[i+1] - V[i+1]) - I[2*i+1]
+            Inew[2*i + 1] = GC * (Vnew[i + 1] - V[i + 1]) - I[2*i + 1]
+#            I[2*i+1] = GC * (Vnew[i+1] - V[i+1]) - I[2*i+1]
              
     #         # backwards euler
     #         # inductor
     #         Inew[2 * i] = GL * (Vnew[i] - Vnew[i+1]) + I[2*i]
     #         # capacitor
     #         Inew[2 * i + 1] = GC * (Vnew[i + 1] + V[i + 1])
-        return Vnew, I
+        return Vnew, Inew
  
     def get_V(self,t,xindex):
         ''' Assumes already calculated '''
@@ -312,64 +321,83 @@ class Line():
     def has_scope(self):
         return self.scope is not None
         
-    def init_movie(self):
+    def init_movie(self, nfig=None):
         
-        # Plot everything
+        # Plot voltage
 
         x = self.x
         
-        self.fig = plt.figure()
+        self.fig = plt.figure(num=nfig)
+        self.fig.clear()
         nscreens = 1
         if self.has_scope():
             nscreens = 2
         gs = gridspec.GridSpec(nscreens, 1)
-        ax = plt.subplot(gs[0])
-        ax.set_xlim((0,self.d))
-        ax.set_ylim((-2,2))
-        ax.set_ylabel('Voltage (V)')
-        ax.set_xlabel('Line (m)')
-        ax.set_title('Line ${0:.0f}\Omega$, Pulser ${1:.0f}\Omega$, Pulse ${2:.0f}ns$ with ${3:.0f}ns$ rise time'.format(
+        axV = plt.subplot(gs[0])
+        axV.set_xlim((0,self.d))
+        axV.set_ylim((-2,2))
+        axV.set_ylabel('Voltage (V)')
+        axV.set_xlabel('Line (m)')
+        axV.set_title('Line ${0:.0f}\Omega$, Pulser ${1:.0f}\Omega$, Pulse ${2:.0f}ns$ with ${3:.0f}ns$ rise time'.format(
                                 self.Z,self.Inp.Z,self.Inp.tOn*1e9,self.Inp.tRise*1e9))
-        ax.plot(x,np.zeros_like(x),':k')
+        axV.plot(x,np.zeros_like(x),':k')
         if self.has_scope():    
-            ax.plot([self.scope.xscope*self.d]*2,ax.get_ylim(),'-r',linewidth=2,alpha=0.3)
+            axV.plot([self.scope.xscope*self.d]*2,axV.get_ylim(),'-r',linewidth=2,alpha=0.3)
         else:
-            self.lscope = None
+            self.lscopeV = None
+            self.lscopeI = None
             self.tscope = None
-        self.line, = ax.plot([], [], lw=2)
-        self.ttl = ax.text(.05, 0.95, '', transform = ax.transAxes, va='center')
+        self.lineV, = axV.plot([], [], lw=2)
+        self.ttl = axV.text(.05, 0.95, '', transform = axV.transAxes, va='center')
+        
+        # Plot current
+        
+        axI = axV.twinx()
+        axI.set_xlim((0,self.d))
+        axI.set_ylabel('Current (A)')
+        axI.yaxis.label.set_color('r')
+        axI.tick_params(axis='y', colors='r')
+        self.lineI, = axI.plot([], [], color='r', lw=2)
         
         # %% Oscilloscope
         if self.scope is not None:
-            ax2 = plt.subplot(gs[1])    
-            ax2.set_xlabel('Time (ns)')
-            ax2.set_ylabel('Voltage (V)')
-            ax2.set_title('Oscilloscope at x={0:.1f}m'.format(self.scope.xscope*self.d))
-            ax2.set_xlim((-self.scope.tmax*1e9,0))
-            ax2.set_ylim((-2,2))
-            ax2.grid(True)
-            self.lscope, = ax2.plot([], [], lw=2)
+            ax2V = plt.subplot(gs[1])    
+            ax2V.set_xlabel('Time (ns)')
+            ax2V.set_ylabel('Voltage (V)')
+            ax2V.set_title('Oscilloscope at x={0:.1f}m'.format(self.scope.xscope*self.d))
+            ax2V.set_xlim((-self.scope.tmax*1e9,0))
+            ax2V.set_ylim((-2,2))
+            ax2V.grid(True)
+            self.lscopeV, = ax2V.plot([], [], lw=2)
+            
+            ax2I = ax2V.twinx()
+            ax2I.set_ylabel('Current (A)')
+            ax2I.yaxis.label.set_color('r')
+            ax2I.tick_params(axis='y', colors='r')
+            ax2I.set_xlim((-self.scope.tmax*1e9,0))
+            ax2I.set_ylim((-0.1,0.1))
+            self.lscopeI, = ax2I.plot([], [], c='r', lw=2)
+            
+            plt.tight_layout()
         
     def start_movie(self,nframes=1000):
         ''' note: animation has to create a self.anim ?'''
 
         self.anim = animation.FuncAnimation(self.fig, self.animate, init_func=self.init,
-               frames=nframes, interval=self.interval)
-               #, blit=True,repeat=True,               repeat_delay=500)
-#                           
-#        self.anim = animation.FuncAnimation(self.fig, self.animate,
-#            frames=nframes, interval=50, blit=True,repeat=True,
-#            repeat_delay=500)
-            
+               frames=nframes, interval=self.interval, blit=True)
+               # repeat=True, repeat_delay=500)
 
     def init(self):    
 
         self.ttl.set_text('')
-        self.line.set_data([], [])
+        self.lineV.set_data([], [])
+        self.lineI.set_data([], [])
         if self.scope is not None:
-            self.lscope.set_data([], [])
+            self.lscopeV.set_data([], [])
+            self.lscopeI.set_data([], [])
             self.tscope, self.Vscope = ([], [])
-        return self.line, self.lscope, self.ttl
+            self.tscope, self.Iscope = ([], [])
+        return self.lineV, self.lineI, self.lscopeV, self.lscopeI, self.ttl
                     
     # animation function.  This is called sequentially
     def animate(self,i):
@@ -378,16 +406,17 @@ class Line():
     
         t = self.t[i]
 
-        self.line.set_data(self.x,self.get_V(t,self.xindex))    
-        self.line.set_data(self.x,self.get_I(t,self.xindex))    
+        self.lineV.set_data(self.x,self.get_V(t,self.xindex))    
+        self.lineI.set_data(self.x,self.get_I(t,self.xindex))    
         self.ttl.set_text('{0:.1f}ns'.format(t*1e9))
         
-        # scope
+        # draw scope view (against time)
         if self.has_scope():
             self.tscope.append(-t*1e9)
             self.Vscope = [self.V[t][self.scope.iscope]] + self.Vscope
             self.Iscope = [self.I[t][self.scope.iscope]] + self.Iscope
-            self.lscope.set_data(self.tscope,self.Vscope)
+            self.lscopeV.set_data(self.tscope,self.Vscope)
+            self.lscopeI.set_data(self.tscope,self.Iscope)
             
         # DEBUG MODE: should print t here
         # Else an error happens in animate, but is not reported because animate
@@ -395,7 +424,7 @@ class Line():
         if DEBUG:
             print(t)
         
-        return self.line, self.lscope, self.ttl
+        return self.lineV, self.lineI, self.lscopeV, self.lscopeI, self.ttl
     
 
 if __name__ == '__main__':
@@ -407,7 +436,8 @@ if __name__ == '__main__':
     Zin = 200             # pulser impedance
     Zout = 1e-9            # Load impedance
     tmax = 100e-9
-    dt = 1e-10          # time resolution. lower = better but more time consuming
+    dt = 0.1e-10          # time resolution. lower = better but more time consuming
+#    dt = 1e-10          # time resolution. lower = better but more time consuming
     tRise = 0.1e-9 #1e-9
     tFall = tRise
     tPeriod = 5000e-9 #1000e-9
@@ -429,10 +459,10 @@ if __name__ == '__main__':
     
     scope = tl.add_scope(xscope,tmax)
     
-    scope.plot(plt.figure(1))
+    scope.plot(nfig=1)
     
     nframes = int(tmax//dt)
-    tl.init_movie()
+    tl.init_movie(nfig=2)
     tl.start_movie(nframes=nframes)
     
     tl.fig.show() 
