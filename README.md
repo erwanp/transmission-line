@@ -3,6 +3,12 @@ Simulate a signal propagating along a transmission line
 
 Uses a finite-element approach to model a lossless transmission line
 
+See explanations here : https://github.com/erwanp/transmission-line/blob/master/transmission_line.ipynb 
+
+
+
+--
+
 Original core was developed at:
 http://helloworld922.blogspot.com/2013/04/transmission-line-simulation.html
 
