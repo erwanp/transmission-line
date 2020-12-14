@@ -159,12 +159,11 @@ class Line():
 
     imulation:
     - maxSteps
-    - interval            # time before refreshing screen
 
     '''
 
     def __init__(self,Z,d,Inp,Out,eps=2.25,
-                 xscope=1,elems=256,interval=20,dt=1e-11):
+                 xscope=1,elems=256,dt=1e-11):
 
         # Model parameters
         v = 2.998e8/sqrt(eps)   # signal speed (m/s)
@@ -181,7 +180,6 @@ class Line():
         self.scope = None
 
         self.elems = elems
-        self.interval = interval
 
         # Input / output objects
         self.Inp = Inp
@@ -214,7 +212,6 @@ class Line():
         self.x = x = np.linspace(0,d,elems+1)  # line
         self.xindex = np.arange(len(x))
 
-        # Adjust interval to change the animation speed
 #        params = [G1, G2, GC, GL,tRise,tFall,tPeriod,tOn,eps,Von,Voff,xscope,
 #                 dt,elems,diags,x]
         params = [G1, G2, GC, GL, elems, diags,x]
@@ -239,6 +236,7 @@ class Line():
         dt = self.dt
         tarr = np.arange(0,tmax,dt)
         self.t = tarr
+        self.tmax = tmax
 
         self.V[0] = V = zeros(self.elems + 1)
         self.I[0] = I = zeros(2 * self.elems)
@@ -344,12 +342,25 @@ class Line():
 
             plt.tight_layout()
 
-    def start_movie(self,nframes=1000, blit=False):
-        ''' note: animation has to create a self.anim ?'''
+    def start_movie(self, duration=10):
+        ''' note: animation has to create a self.anim ?
+        
+        duration : float, movie duration in seconds
+        
+        Reference:  https://stackoverflow.com/questions/22010586/matplotlib-animation-duration '''
+        
+        nframes_total = int(self.tmax // self.dt)
+        
+        interval = duration / nframes_total * 1000 
+        # forced to skip images for very large number of frames : 
+        drawtime_per_frame = 1e-2  # time to draw a frame. User dependant. 
+        nframes = int(duration // drawtime_per_frame)
+        accelerate = max(1, nframes_total // nframes)  
 
-        self.anim = animation.FuncAnimation(self.fig, self.animate, init_func=self.init,
-               frames=nframes, interval=self.interval, blit=blit)
-               # repeat=True, repeat_delay=500)
+        
+        func = lambda i: self.animate(int(i*accelerate))
+        self.anim = animation.FuncAnimation(self.fig, func, init_func=self.init,
+               frames=nframes, interval=interval, blit=False)
 
     def init(self):
 
@@ -463,7 +474,7 @@ def simStep(V, I, Vs, dt,
 if __name__ == '__main__':
 
 
-    dt=3e-10
+    dt=0.1e-10
     tmax = 100e-9
 
 
@@ -480,13 +491,13 @@ if __name__ == '__main__':
                  tFall=1e-9,   
                  tPeriod=100e-6, #1000e-9
                  )
-    load = Load(Z=75,        # Load impedance
+    load = Load(Z=500,        # Load impedance
                 )
     tl=Line(Z=75,               # equivalent line impedance (Ohm)
             d=3,                # line length (m)
             Inp=fid,
             Out=load,
-            eps=2.25,interval=1,elems=250,
+            eps=2.25,elems=250,
             dt=dt,          # time resolution. lower = better but more time consuming
             )
 
@@ -495,10 +506,9 @@ if __name__ == '__main__':
 
     scope = tl.add_scope(xscope,tmax)
 
-    scope.plot(nfig=1)
+    scope.plot()
 
-    nframes = int(tmax//dt)
     tl.init_movie(nfig=2)
-    tl.start_movie(nframes=nframes, blit=False)
+    tl.start_movie()
 
     tl.fig.show()
