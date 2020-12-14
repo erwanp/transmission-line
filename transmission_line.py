@@ -230,8 +230,11 @@ class Line():
         self.tscope = None
 
 
-    def solve(self,tmax=20e-9):
+    def solve(self,tmax=20e-9, verbose=False):
         ''' do all calculations '''
+        
+        from time import time
+        t0_computation = time()
 
         dt = self.dt
         tarr = np.arange(0,tmax,dt)
@@ -247,7 +250,9 @@ class Line():
             Vs = self.Inp.V(t)
 
             # line voltage
-            V, I = self.simStep(V, I, Vs, dt)
+            G1, G2, GC, GL, elems, diags,x = self.params
+            V, I = simStep(V, I, Vs, dt,
+                                G1, G2, GC, GL, elems, diags,x)
 
             self.V[t], self.I[t] = V, I         # TODO: turn V[t] into a function that reads Varray [and maybe interpolate]
             Varray.append(V)
@@ -257,64 +262,8 @@ class Line():
         self.Iarray = np.array(Iarray)
 
         self.solved = True
-
-#    @jit
-    def simStep(self, V, I, Vs, dt):
-        '''
-        Simulates one time step starting from V, I with timestep dt
-
-        Note: performance test:
-        - without @jit: 100 loops, best of 3: 1.97 ms per loop
-        - with @jit: 10000 loops, best of 3: 16.1 µs per loop
-        '''
-
-        (G1, G2, GC, GL, elems, diags,x) = self.params
-
-        # calculate norton currents for caps/inductors
-        INort = zeros(2 * elems)
-        for i in range(0, elems):
-            # trapz
-            # inductor
-            INort[2*i] = -((V[i] - V[i+1]) * GL + I[2*i])
-            # capacitor
-            INort[2*i+1] = V[i+1] * GC + I[2*i+1]
-
-    #        # backwards euler
-    #        # inductor
-    #        INort[2 * i] = -I[2 * i]
-    #        # capacitor
-    #        INort[2 * i + 1] = V[i+1] * GC
-
-        # build B vector
-        Bvec = zeros(elems + 1)
-        Bvec[0] = INort[0] + G1 * Vs
-        for i in range(1, elems):
-            Bvec[i] = INort[2*i-1] + INort[2*i] - INort[2*i-2] + GL * Bvec[i-1] / diags[i-1]
-        Bvec[elems] = INort[2*elems-1] - INort[2*elems-2] + GL * Bvec[elems-1] / diags[elems-1]
-
-        # back-sub for voltages
-        Vnew = zeros(elems + 1)
-        Vnew[elems] = Bvec[elems] / diags[elems]
-        for i in range(elems - 1, -1, -1):
-            Vnew[i] = (Bvec[i] + GL * Vnew[i+1]) / diags[i]
-
-        # calculate currents through inductors/caps
-        Inew = zeros(2 * elems)
-        for i in range(0, elems):
-            # trapz
-            # inductor
-            Inew[2*i] = GL * (Vnew[i] - Vnew[i+1] + V[i] - V[i+1]) + I[2*i]
-#            I[2*i] = GL * (Vnew[i] - Vnew[i+1] + V[i] - V[i+1]) + I[2*i]
-            # capacitor
-            Inew[2*i + 1] = GC * (Vnew[i + 1] - V[i + 1]) - I[2*i + 1]
-#            I[2*i+1] = GC * (Vnew[i+1] - V[i+1]) - I[2*i+1]
-
-    #         # backwards euler
-    #         # inductor
-    #         Inew[2 * i] = GL * (Vnew[i] - Vnew[i+1]) + I[2*i]
-    #         # capacitor
-    #         Inew[2 * i + 1] = GC * (Vnew[i + 1] + V[i + 1])
-        return Vnew, Inew
+        
+        if verbose: print('solved in {:.1f}s'.format(time()-t0_computation))
 
     def get_V(self,t,xindex):
         ''' Assumes already calculated '''
@@ -350,7 +299,7 @@ class Line():
         axV.set_ylim((-2,2))
         axV.set_ylabel('Voltage (V)')
         axV.set_xlabel('Line (m)')
-        axV.set_title('Line ${0:.0f}\Omega$, Pulser ${1:.0f}\Omega$, Pulse ${2:.0f}ns$ with ${3:.0f}ns$ rise time'.format(
+        axV.set_title('Line {0:.0f}Ω, Pulser {1:.0f}Ω, Pulse {2:.0f}ns with {3:.0f}ns rise time'.format(
                                 self.Z,self.Inp.Z,self.Inp.tOn*1e9,self.Inp.tRise*1e9))
         axV.plot(x,np.zeros_like(x),':k')
         if self.has_scope():
@@ -453,6 +402,63 @@ class Line():
         else:
             return self.lineV, self.lscopeV, self.ttl
 
+@jit(nopython=True)
+def simStep(V, I, Vs, dt, 
+            G1, G2, GC, GL, elems, diags,x):
+    '''
+    Simulates one time step starting from V, I with timestep dt
+
+    Note: performance test:
+    - without @jit: 100 loops, best of 3: 1.97 ms per loop
+    - with @jit: 10000 loops, best of 3: 16.1 µs per loop
+    '''
+
+    # calculate norton currents for caps/inductors
+    INort = zeros(2 * elems)
+    for i in range(0, elems):
+        # trapz
+        # inductor
+        INort[2*i] = -((V[i] - V[i+1]) * GL + I[2*i])
+        # capacitor
+        INort[2*i+1] = V[i+1] * GC + I[2*i+1]
+
+#        # backwards euler
+#        # inductor
+#        INort[2 * i] = -I[2 * i]
+#        # capacitor
+#        INort[2 * i + 1] = V[i+1] * GC
+
+    # build B vector
+    Bvec = zeros(elems + 1)
+    Bvec[0] = INort[0] + G1 * Vs
+    for i in range(1, elems):
+        Bvec[i] = INort[2*i-1] + INort[2*i] - INort[2*i-2] + GL * Bvec[i-1] / diags[i-1]
+    Bvec[elems] = INort[2*elems-1] - INort[2*elems-2] + GL * Bvec[elems-1] / diags[elems-1]
+
+    # back-sub for voltages
+    Vnew = zeros(elems + 1)
+    Vnew[elems] = Bvec[elems] / diags[elems]
+    for i in range(elems - 1, -1, -1):
+        Vnew[i] = (Bvec[i] + GL * Vnew[i+1]) / diags[i]
+
+    # calculate currents through inductors/caps
+    Inew = zeros(2 * elems)
+    for i in range(0, elems):
+        # trapz
+        # inductor
+        Inew[2*i] = GL * (Vnew[i] - Vnew[i+1] + V[i] - V[i+1]) + I[2*i]
+#            I[2*i] = GL * (Vnew[i] - Vnew[i+1] + V[i] - V[i+1]) + I[2*i]
+        # capacitor
+        Inew[2*i + 1] = GC * (Vnew[i + 1] - V[i + 1]) - I[2*i + 1]
+#            I[2*i+1] = GC * (Vnew[i+1] - V[i+1]) - I[2*i+1]
+
+#         # backwards euler
+#         # inductor
+#         Inew[2 * i] = GL * (Vnew[i] - Vnew[i+1]) + I[2*i]
+#         # capacitor
+#         Inew[2 * i + 1] = GC * (Vnew[i + 1] + V[i + 1])
+    return Vnew, Inew
+
 
 if __name__ == '__main__':
 
@@ -469,9 +475,9 @@ if __name__ == '__main__':
     fid = Pulser(Z=75,        # pulser impedance
                  Von=1*75/75,   # Zin/Z
                  Voff=0,
-                 tRise=3e-9,   
-                 tOn=8e-9,   
-                 tFall=4e-9,   
+                 tRise=1e-9,   
+                 tOn=10e-9,   
+                 tFall=1e-9,   
                  tPeriod=100e-6, #1000e-9
                  )
     load = Load(Z=75,        # Load impedance
@@ -484,7 +490,7 @@ if __name__ == '__main__':
             dt=dt,          # time resolution. lower = better but more time consuming
             )
 
-    tl.solve(tmax)
+    tl.solve(tmax, verbose=(True))
 
 
     scope = tl.add_scope(xscope,tmax)
